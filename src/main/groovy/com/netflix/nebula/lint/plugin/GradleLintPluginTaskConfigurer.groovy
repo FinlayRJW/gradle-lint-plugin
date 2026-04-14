@@ -47,54 +47,68 @@ class GradleLintPluginTaskConfigurer extends AbstractLintPluginTaskConfigurer {
 
     @Override
     void createTasks(Project project, GradleLintExtension lintExt) {
+        def fixTask = project.tasks.register(FIX_GRADLE_LINT, FixGradleLintTask)
+        fixTask.configure {
+            userDefinedListeners.set(lintExt.listeners)
+            notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+        }
+
+        def fixTask2 = project.tasks.register(FIX_LINT_GRADLE, FixGradleLintTask)
+        fixTask2.configure {
+            userDefinedListeners.set(lintExt.listeners)
+            notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+        }
+
+        def manualLintTask = project.tasks.register(LINT_GRADLE, LintGradleTask)
+        manualLintTask.configure {
+            group = LINT_GROUP
+            failOnWarning.set(true)
+            projectRootDir.set(project.rootDir)
+            notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+        }
+
+        def criticalLintTask = project.tasks.register(CRITICAL_LINT_GRADLE, LintGradleTask)
+        criticalLintTask.configure {
+            group = LINT_GROUP
+            onlyCriticalRules.set(true)
+            projectRootDir.set(project.rootDir)
+            notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+        }
+
+        def autoLintTask = project.tasks.register(AUTO_LINT_GRADLE, LintGradleTask)
+        autoLintTask.configure {
+            group = LINT_GROUP
+            listeners = lintExt.listeners
+            projectRootDir.set(project.rootDir)
+            notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+        }
+
+        configureReportTask(project, lintExt)
+
         if (project.rootProject == project) {
-            def autoLintTask = project.tasks.register(AUTO_LINT_GRADLE, LintGradleTask)
-            autoLintTask.configure {
-                group = LINT_GROUP
-                listeners = lintExt.listeners
-                projectRootDir.set(project.rootDir)
-                notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
-            }
-
-            def manualLintTask = project.tasks.register(LINT_GRADLE, LintGradleTask)
-            manualLintTask.configure {
-                group = LINT_GROUP
-                failOnWarning.set(true)
-                projectRootDir.set(project.rootDir)
-                notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
-            }
-
-
-            def criticalLintTask = project.tasks.register(CRITICAL_LINT_GRADLE, LintGradleTask)
-            criticalLintTask.configure {
-                group = LINT_GROUP
-                onlyCriticalRules.set(true)
-                projectRootDir.set(project.rootDir)
-                notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
-            }
-
-
-            def fixTask = project.tasks.register(FIX_GRADLE_LINT, FixGradleLintTask)
-            fixTask.configure {
-                userDefinedListeners.set(lintExt.listeners)
-                notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
-            }
-
-            def fixTask2 = project.tasks.register(FIX_LINT_GRADLE, FixGradleLintTask)
-            fixTask2.configure {
-                userDefinedListeners.set(lintExt.listeners)
-                notCompatibleWithConfigurationCache("Gradle Lint Plugin is not compatible with configuration cache because it requires project model")
+            // When a subproject applies the lint plugin, wire root's tasks to depend on it
+            def allTaskNames = [FIX_GRADLE_LINT, FIX_LINT_GRADLE, LINT_GRADLE, CRITICAL_LINT_GRADLE, AUTO_LINT_GRADLE, GENERATE_GRADLE_LINT_REPORT]
+            project.subprojects { sub ->
+                sub.plugins.withId('nebula.lint') {
+                    allTaskNames.each { taskName ->
+                        project.tasks.named(taskName).configure { it.dependsOn(sub.tasks.named(taskName)) }
+                    }
+                }
             }
 
             List<TaskProvider> lintTasks = [fixTask, fixTask2, manualLintTask]
-
             configureAutoLint(autoLintTask, project, lintExt, lintTasks, criticalLintTask)
-            configureReportTask(project, lintExt)
         }
     }
 
     @Override
     void wireJavaPlugin(Project project) {
+        // Only wire from root — root's tasks aggregate subproject tasks, and this
+        // ensures all compilation completes before linting. Wiring from subprojects
+        // would cause circular task dependencies when projects depend on each other.
+        if (project.rootProject != project) {
+            return
+        }
         project.plugins.withType(JavaBasePlugin) {
             project.rootProject.tasks.named(FIX_GRADLE_LINT).configure(new Action<Task>() {
                 @Override

@@ -107,19 +107,23 @@ class LintService {
 
     RuleSet ruleSet(Project project) {
         def ruleSet = new CompositeRuleSet()
-        ([project] + project.subprojects).each { p -> ruleSet.addRuleSet(ruleSetForProject(p, false)) }
+        projectsToLint(project).each { p -> ruleSet.addRuleSet(ruleSetForProject(p, false)) }
         return ruleSet
     }
 
+    /**
+     * Lints a project and any subprojects that don't have their own lint tasks.
+     * Subprojects that apply the lint plugin get their own per-project tasks and are
+     * skipped here to avoid Gradle 9's cross-project lock errors.
+     */
     Results lint(Project project, boolean onlyCriticalRules) {
         def analyzer = new ReportableAnalyzer(project)
 
-        ([project] + project.subprojects).each { p ->
+        projectsToLint(project).each { p ->
             def files = SourceCollector.getAllFiles(p.buildFile, p)
             def buildFiles = new BuildFiles(files)
             def ruleSet = ruleSetForProject(p, onlyCriticalRules)
             if (!ruleSet.rules.isEmpty()) {
-                // establish which file we are linting for each rule
                 ruleSet.rules.each { rule ->
                     if (rule instanceof GradleLintRule)
                         rule.buildFiles = buildFiles
@@ -132,5 +136,13 @@ class LintService {
         }
 
         return analyzer.resultsForRootProject
+    }
+
+    /**
+     * Returns the list of projects this task should lint. Includes the project itself
+     * plus any subprojects that don't have the lint plugin applied (those will lint themselves).
+     */
+    private static List<Project> projectsToLint(Project project) {
+        [project] + project.subprojects.findAll { !it.plugins.hasPlugin(GradleLintPlugin) }
     }
 }
